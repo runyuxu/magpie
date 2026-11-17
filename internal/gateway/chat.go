@@ -498,7 +498,10 @@ func buildChat(r *Request, model, host string, rejectTemp bool) []byte {
 			for _, p := range m.Parts {
 				switch p.Kind {
 				case ToolCall:
-					id := p.ID
+					// a foreign provider can join two ids into one longer than the 64
+					// characters a Chat upstream checks (#732): bound it, as the call's
+					// own result is bound below, so the two still name each other
+					id := provider.BoundCallID(p.ID)
 					if id == "" {
 						id = "call_" + newID()
 					}
@@ -611,7 +614,9 @@ func buildChat(r *Request, model, host string, rejectTemp bool) []byte {
 				if p.IsError && failedAsText[host] {
 					out = "Error: " + out
 				}
-				tool := map[string]any{"role": "tool", "tool_call_id": p.CallID, "content": out}
+				// the call this answers was bound the same way above, so an
+				// overlong id still pairs with it
+				tool := map[string]any{"role": "tool", "tool_call_id": provider.BoundCallID(p.CallID), "content": out}
 				if p.IsError && host == "cursor" {
 					// Cursor's plugin reads it, as the built-in told Cursor
 					// isError; another chat upstream has no such field

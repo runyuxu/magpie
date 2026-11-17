@@ -340,3 +340,53 @@ func TestChatCleanExchangeUntouched(t *testing.T) {
 		t.Fatal("sequence fails Kimi's tool exchange validation")
 	}
 }
+
+// A foreign provider can join two ids into one longer than the 64 characters
+// a Chat upstream checks (Cursor's grok hands out 87 or 88). The call and the
+// tool result that answers it must both be bound to the same id, so the
+// upstream still pairs them, and an id that already fits must pass through.
+func TestChatOverlongCallIDIsBound(t *testing.T) {
+	long := "call-9011a12d-e964-4c2e-93b5-22a9f3cb86b7-108__fc_70ce8f22-8634-9244-a5ef-be65dd2de701_0"
+	short := "call_0123456789abcdef01234567"
+	r := &Request{Messages: []Message{
+		{Role: "assistant", Parts: []Part{call(long), call(short)}},
+		{Role: "user", Parts: []Part{result(long, "done"), result(short, "ok")}},
+	}}
+	_, msgs := chatTrace(t, r)
+
+	bound := ""
+	if calls, ok := msgs[0]["tool_calls"].([]any); ok {
+		for _, c := range calls {
+			id, _ := c.(map[string]any)["id"].(string)
+			switch {
+			case len(id) == 64 && bound == "":
+				bound = id
+			case id == short:
+			default:
+				t.Fatalf("call id = %q, want the 64-char bound form or %q", id, short)
+			}
+		}
+	}
+	if bound == "" {
+		t.Fatal("the overlong call id was not bound")
+	}
+	var answered bool
+	for _, m := range msgs {
+		if m["role"] != "tool" {
+			continue
+		}
+		id, _ := m["tool_call_id"].(string)
+		if id == bound {
+			answered = true
+		}
+		if len(id) > 64 {
+			t.Fatalf("tool_call_id = %q still exceeds 64 characters", id)
+		}
+	}
+	if !answered {
+		t.Fatal("no tool result carries the bound id, so the call and its result diverged")
+	}
+	if !kimiValid(msgs) {
+		t.Fatal("sequence fails Kimi's tool exchange validation")
+	}
+}
